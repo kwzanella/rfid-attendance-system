@@ -1,0 +1,64 @@
+version: "3.10"
+
+services:
+
+  broker:
+    container_name: broker
+    build:
+      context: broker
+      dockerfile: Dockerfile
+    cpuset: "4"
+    mem_limit: 512M
+    networks:
+      - mqtt-network
+    ports:
+      - "1883:1883"
+    restart: always
+
+  database:
+    container_name: database
+    build:
+      context: database
+      dockerfile: Dockerfile
+    cpuset: "4"
+    mem_limit: 512M
+    networks:
+      - mqtt-network
+    ports:
+      - "6379:6379"
+    restart: always
+
+  interface:
+    container_name: interface
+    build:
+      context: interface
+      dockerfile: Dockerfile
+    stdin_open: true
+    tty: true
+    cpuset: "4"
+    mem_limit: 512M
+    networks:
+      - mqtt-network
+    ports:
+    - "5000:5000"
+    depends_on:
+      - database
+    restart: always
+
+  subscriber:
+    container_name: subscriber
+    build:
+      context: subscriber
+      dockerfile: Dockerfile
+    cpuset: "4"
+    mem_limit: 512M
+    networks:
+      - mqtt-network
+    depends_on:
+      - broker
+      - database
+    restart: always
+
+networks:
+  mqtt-network:
+    driver: bridge

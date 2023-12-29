@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rfid-attendance-system</title>
+</head>
+
+<body>
+    <h1>rfid-attendance-system</h1>
+    <p>Sistema verificador de presença com RFID</p>
+
+    <br>
+    <br>
+
+    <table border="1">
+        <h2>Tabela de Tags</h2>
+        <tr>
+            <th>ID da Tag</th>
+            <th>Matrícula</th>
+        </tr>
+        {% for item in data %}
+        <tr>
+            <td>{{ item.key }}</td>
+            <td>{{ item.value }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <br>
+
+    <form action="/" method="post">
+        <h2>Adicionar/Editar Tag</h2>
+        <label for="add_key">ID:</label>
+        <input type="hidden" name="add" value="add">
+        <input type="text" id="add_key" name="key" required>
+        <label for="add_value">Matrícula:</label>
+        <input type="text" id="add_value" name="value" required>
+        <input type="submit" value="Adicionar">
+    </form>
+
+    <br>
+
+    <form action="/" method="post">
+        <h2>Excluir Tag</h2>
+        <label for="delete_key">ID:</label>
+        <input type="hidden" name="delete" value="delete">
+        <input type="text" id="delete_key" name="key" required>
+        <input type="submit" value="Excluir">
+    </form>
+
+    <br>
+
+    <table border="1">
+        <h2>Tabela de Chamada</h2>
+        <tr>
+            <th>Matrícula</th>
+            <th>Datas</th>
+        </tr>
+        {% for item in attendance %}
+        <tr>
+            <td>{{ item.key }}</td>
+            <td>
+                {% for data in item.value %}
+                {{ data }}
+                <br>
+                {% endfor %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <br>
+
+</body>
+
+</html>
