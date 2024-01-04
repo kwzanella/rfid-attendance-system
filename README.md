@@ -14,11 +14,3 @@ Usando o script executando no container `interface` é possível adicionar, remo
     docker attach interface
 
 ## References
-
-https://www.snapeda.com/parts/ESP32-DEVKITC/Espressif%20Systems/view-part/?ref=search&t=esp32
-
-https://docs.espressif.com/projects/esp-idf/en/latest/esp32/hw-reference/esp32/get-started-devkitc.html
-
-https://www.snapeda.com/parts/RFID-RC522/Handson%20Technology/view-part/?ref=search&t=rc522%20RFID
-
-https://linuxhint.com/power-esp32/
