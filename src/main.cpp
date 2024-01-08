@@ -1,3 +1,4 @@
+
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -15,9 +16,13 @@
 #include "freertos/task.h"
 #include "driver/ledc.h"
 
+#include "secrets.h"
 #include "mqtt_client.h"
 
-#include "secrets.h"
+
+#include "Arduino.h"
+
+
 
 /*
  * -------------------------------------------
@@ -65,7 +70,6 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
 
@@ -112,12 +116,14 @@ esp_err_t wifi_init_sta(void) {
                                                         NULL,
                                                         &instance_got_ip));
 
+    // cpp hack (wtf)
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = SSID,
-            .password = PASSWORD,
+            {.ssid = SSID},
+            {.password = PASSWORD},
         },
     };
+    
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
     ESP_ERROR_CHECK(esp_wifi_start() );
@@ -214,7 +220,7 @@ void blink_led_task(void *pvParameters) {
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
-    esp_mqtt_event_handle_t event = event_data;
+    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
     switch ((esp_mqtt_event_id_t)event_id) {
@@ -271,18 +277,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 static void mqtt_app_start(void)
 {
     esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri    = BROKER_URI,
-        .credentials.client_id = CLIENT_ID,
+        .uri       = BROKER_URI,
+        .client_id = CLIENT_ID,
     };
 
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
-    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_register_event(client, MQTT_EVENT_ANY, mqtt_event_handler, NULL);
     esp_mqtt_client_start(client);
 }
 
 // Meant to initialize and start main functionality
-void app_main(void) {
+extern "C" void app_main() {
+    initArduino();
+
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
