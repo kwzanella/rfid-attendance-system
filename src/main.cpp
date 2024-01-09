@@ -19,8 +19,11 @@
 #include "secrets.h"
 #include "mqtt_client.h"
 
-
 #include "Arduino.h"
+#include <MFRC522v2.h>
+#include <MFRC522DriverSPI.h>
+#include <MFRC522DriverPinSimple.h>
+#include <MFRC522Debug.h>
 
 
 
@@ -61,6 +64,10 @@
 #define FAILURE_FREQUENCY  (uint32_t)  500
 
 #define WIFI_MAX_RETRY 5
+
+MFRC522DriverPinSimple chip_select(CS_PIN);
+MFRC522DriverSPI driver{chip_select};   
+MFRC522 mfrc522{driver};  // Driver do módulo RFID-RC522
 
 static const char *TAG = "wifi station";
 static int s_retry_num = 0;
@@ -215,6 +222,7 @@ void blink_led_task(void *pvParameters) {
         play_tone(SUCCESS_FREQUENCY, 1000);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+    vTaskDelete(NULL);
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -287,6 +295,26 @@ static void mqtt_app_start(void)
     esp_mqtt_client_start(client);
 }
 
+void print_hex(const byte* byte_array, const uint8_t length) {
+    for (byte i = 0; i < length; ++i) {
+        printf("%x ", byte_array[i]);
+    }
+    printf("\n");
+}
+
+void mfrc522_task(void *pvParameters) {
+    for(;;) {
+        // Reseta o loop se não tiver cartão novo presente no reader
+        if ( ! mfrc522.PICC_IsNewCardPresent() || ! mfrc522.PICC_ReadCardSerial()) {
+            continue;
+        }
+        printf("PICC UID: ");  // PICC = Proximity Integrated Circuit Card
+        print_hex(mfrc522.uid.uidByte, mfrc522.uid.size);
+        mfrc522.PICC_HaltA();
+    }
+    vTaskDelete(NULL);
+}
+
 // Meant to initialize and start main functionality
 extern "C" void app_main() {
     initArduino();
@@ -305,10 +333,11 @@ extern "C" void app_main() {
     }
 
     mqtt_app_start();
-
     configure_led();
 
     init_buzzer();
+    mfrc522.PCD_Init();
 
     xTaskCreate(&blink_led_task, "blink_led_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&mfrc522_task, "mfrc522_task", 2048, NULL, 5, NULL);
 }
