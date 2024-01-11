@@ -21,7 +21,7 @@ if is_connected:
 
 def on_connect(client, userdata, flags, rc):
     print(f"\nConnected with result code {rc}\n", flush=True)
-    client.subscribe("topic/tag_uid")  # topic
+    client.subscribe("topic/qos1")  # topic
 
 
 def check_on_database(key):
@@ -43,18 +43,19 @@ def check_PICC_UID(picc_uid):
     result = tags_db.get(picc_uid)
     if result is not None:
         print(f"{picc_uid} found in Redis")
-        client.publish("topic/db_response", b"\x01")
+        client.publish("topic/qos0", "1")
         update_attendance(result)
     else:
         print(f"Key {picc_uid} not found in Redis.")
-        client.publish("topic/db_response", b"\x00")  # payload é enviado em binário puro (equivalente a 0)
+        client.publish("topic/qos0", "0")
 
 
 def on_message(client, userdata, msg):
     topic = msg.topic
-    message = binascii.hexlify(
-        msg.payload
-    ).decode()  # Converte hexadecimal enviado do ESP32 para string
+    # message = binascii.hexlify(
+    #     msg.payload
+    # ).decode()  # Converte hexadecimal enviado do ESP32 para string
+    message = msg.payload.decode()
     valid = check_on_database(message)
     output = {"Topic": topic, "Message": message, "Valid": valid}
     print(f"Message received! {output}", flush=True)

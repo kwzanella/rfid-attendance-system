@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -48,7 +49,13 @@
 #define SUCCESS_FREQUENCY  1000
 #define FAILURE_FREQUENCY  500
 
+#define RESPONSE_SUCCESS_BIT  BIT0
+#define RESPONSE_FAIL_BIT     BIT1
+
 static const char *TAG = "app_main";
+QueueHandle_t mqtt_in;
+QueueHandle_t mqtt_out;
+static EventGroupHandle_t s_response_event_group;
 
 MFRC522DriverPinSimple chip_select(CS_PIN);
 MFRC522DriverSPI driver{chip_select};   
@@ -60,29 +67,51 @@ void configure_led(void) {
     // TODO: proper GPIO config and init
     gpio_reset_pin(RED_LED);
     gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(GREEN_LED);
+    gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
 }
 
-void blink_led(void) {
-    gpio_set_level(RED_LED, 1);
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    gpio_set_level(RED_LED, 0);
-}
-
-
-void blink_led_task(void *pvParameters) {
+void hardware_action_task(void *pvParameters) {
     while (1) {
-        blink_led();
-        play_tone(SUCCESS_FREQUENCY, 1000);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        EventBits_t bits = xEventGroupWaitBits(s_response_event_group,
+            RESPONSE_SUCCESS_BIT | RESPONSE_FAIL_BIT,
+            pdTRUE,
+            pdFALSE,
+            portMAX_DELAY);
+
+        if (bits & RESPONSE_SUCCESS_BIT) {
+            printf("SUCCESS\n");
+            gpio_set_level(GREEN_LED, 1);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            gpio_set_level(GREEN_LED, 0);
+
+            play_tone(SUCCESS_FREQUENCY, TONE_DURATION);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+        else if (bits & RESPONSE_FAIL_BIT) {
+            printf("FAILURE\n");
+            gpio_set_level(RED_LED, 1);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            gpio_set_level(RED_LED, 0);
+
+            play_tone(FAILURE_FREQUENCY, TONE_DURATION);
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
     }
     vTaskDelete(NULL);
 }
 
-void print_hex(const byte* byte_array, const uint8_t length) {
-    for (byte i = 0; i < length; ++i) {
-        printf("%x ", byte_array[i]);
+void byte_array_to_str(byte array[], uint8_t len, char buffer[]) {
+    for (uint8_t i = 0; i < len; ++i) {
+        // Extract the upper and lower 4 bits of each byte in the array
+        byte nib1 = (array[i] >> 4) & 0x0F;
+        byte nib2 = (array[i] >> 0) & 0x0F;
+
+        // Convert the 4-bit values to ASCII characters
+        buffer[i * 2 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
+        buffer[i * 2 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
     }
-    printf("\n");
+    buffer[len * 2] = '\0';  // Add a null terminator at the end of the string
 }
 
 void mfrc522_task(void *pvParameters) {
@@ -91,9 +120,41 @@ void mfrc522_task(void *pvParameters) {
         if ( ! mfrc522.PICC_IsNewCardPresent() || ! mfrc522.PICC_ReadCardSerial()) {
             continue;
         }
-        printf("PICC UID: ");  // PICC = Proximity Integrated Circuit Card
-        print_hex(mfrc522.uid.uidByte, mfrc522.uid.size);
+        char uid_str[mfrc522.uid.size *2 + 1] = "";
+        byte_array_to_str(mfrc522.uid.uidByte, mfrc522.uid.size, uid_str);
+        
+        xQueueSend(mqtt_out, &uid_str, 0);
         mfrc522.PICC_HaltA();
+    }
+    vTaskDelete(NULL);
+}
+
+void UID_publish_task(void *pvParameters) {
+    for(;;) {
+        char uid_str[9] = "";
+        uid_str[8] = '\0';  // Null-terminate the buffer just to be sure
+        xQueueReceive(mqtt_out, uid_str, portMAX_DELAY);  // HACK: does portMAX_DELAY actually wait indefinetely?
+
+        ESP_LOGI(TAG, "PICC UID: %s", uid_str);
+        publish("topic/qos1", uid_str, 0, 1, 0);
+    }
+    vTaskDelete(NULL);
+}
+
+void response_task(void *pvParameters) {
+    for(;;) {
+        char buffer[2];  // Buffer to store "0" or "1"
+        buffer[1] = '\0';  // Null-terminate the buffer just to be sure
+
+        xQueueReceive(mqtt_in, buffer, portMAX_DELAY);
+        printf("Response: %s\n", buffer);
+
+        if(strcmp(buffer, "1") == 0) {
+            xEventGroupSetBits(s_response_event_group, RESPONSE_SUCCESS_BIT);
+        }
+        else if(strcmp(buffer, "0") == 0) {
+            xEventGroupSetBits(s_response_event_group, RESPONSE_FAIL_BIT);
+        }
     }
     vTaskDelete(NULL);
 }
@@ -115,12 +176,22 @@ extern "C" void app_main() {
         return;
     }
 
+    mqtt_in = xQueueCreate( 5, sizeof(char) );  // TODO: delete after use
+    mqtt_out = xQueueCreate( 5, 8 * sizeof(char) );  // TODO: delete after use
+	configASSERT( mqtt_in );
+    configASSERT( mqtt_out );
+
     mqtt_app_start();
     configure_led();
 
     buzzer_init();
     mfrc522.PCD_Init();
 
-    xTaskCreate(&blink_led_task, "blink_led_task", 2048, NULL, 5, NULL);
+    s_response_event_group = xEventGroupCreate();  // TODO: proper deletion
+
+    // TODO: define proper parameters
     xTaskCreate(&mfrc522_task, "mfrc522_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&response_task, "comm_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&UID_publish_task, "mfrc522_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&hardware_action_task, "hardware_action_task", 2048, NULL, 5, NULL);
 }
