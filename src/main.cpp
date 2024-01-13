@@ -1,22 +1,26 @@
+/* RTOS includes */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+
+/* ESP-IDF includes */
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
-#include "secrets.h"
-#include "wifi_handler.h"
-#include "mqtt_handler.h"
-#include "buzzer_controller.h"
-
+/* Arduino includes */
 #include "Arduino.h"
 #include <MFRC522v2.h>
 #include <MFRC522DriverSPI.h>
 #include <MFRC522DriverPinSimple.h>
 #include <MFRC522Debug.h>
 
+/* project header includes */
+#include "secrets.h"
+#include "wifi_handler.h"
+#include "mqtt_handler.h"
+#include "buzzer_controller.h"
 
 /*
  * -------------------------------------------
@@ -33,54 +37,57 @@
  * Buzzer                       GPIO 22
 */
 
-#define COPI_PIN           GPIO_NUM_23
-#define CIPO_PIN           GPIO_NUM_19
-#define CS_PIN             GPIO_NUM_5 
-#define RST_PIN            GPIO_NUM_15
-#define SCK_PIN            GPIO_NUM_18
+#define COPI_PIN              GPIO_NUM_23
+#define CIPO_PIN              GPIO_NUM_19
+#define CS_PIN                GPIO_NUM_5 
+#define RST_PIN               GPIO_NUM_15
+#define SCK_PIN               GPIO_NUM_18
 
-#define GREEN_LED          GPIO_NUM_21
-#define RED_LED            GPIO_NUM_4
+#define GREEN_LED             GPIO_NUM_21
+#define RED_LED               GPIO_NUM_4
 
-#define LED_DELAY          200
-#define TONE_DURATION      200
-#define ACTION_DELAY       500
+#define LED_DELAY             200
+#define TONE_DURATION         200
+#define ACTION_DELAY          500
 
-#define SUCCESS_FREQUENCY  1000
-#define FAILURE_FREQUENCY  500
+#define SUCCESS_FREQUENCY     1000
+#define FAILURE_FREQUENCY     500
 
+/* used for event group control */
 #define RESPONSE_SUCCESS_BIT  BIT0
 #define RESPONSE_FAIL_BIT     BIT1
 
 static const char *TAG = "app_main";
-QueueHandle_t mqtt_in;
-QueueHandle_t mqtt_out;
-static EventGroupHandle_t s_response_event_group;
 
+QueueHandle_t sub_queue;  // queue to store data from SUB_TOPIC
+QueueHandle_t pub_queue;  // queue to store data from PUB_TOPIC
+
+static EventGroupHandle_t s_hardware_event_group;  // event group to control hardware accordingly
+
+/* both redundant, only used to init MFRC522 class */
 MFRC522DriverPinSimple chip_select(CS_PIN);
-MFRC522DriverSPI driver{chip_select};   
+MFRC522DriverSPI driver{chip_select};
+
 MFRC522 mfrc522{driver};
 
-uint8_t s_led_state = 0;
-
+// TODO: proper GPIO config and init. Will remove this function later
 void configure_led(void) {
-    // TODO: proper GPIO config and init
     gpio_reset_pin(RED_LED);
     gpio_set_direction(RED_LED, GPIO_MODE_OUTPUT);
     gpio_reset_pin(GREEN_LED);
     gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
 }
 
+// Controls the LED and buzzer according to the data from the event group
 void hardware_action_task(void *pvParameters) {
     while (1) {
-        EventBits_t bits = xEventGroupWaitBits(s_response_event_group,
+        EventBits_t bits = xEventGroupWaitBits(s_hardware_event_group,
             RESPONSE_SUCCESS_BIT | RESPONSE_FAIL_BIT,
-            pdTRUE,
+            pdTRUE,  // reset bits after exit
             pdFALSE,
             portMAX_DELAY);
 
         if (bits & RESPONSE_SUCCESS_BIT) {
-            printf("SUCCESS\n");
             gpio_set_level(GREEN_LED, 1);
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             gpio_set_level(GREEN_LED, 0);
@@ -89,7 +96,6 @@ void hardware_action_task(void *pvParameters) {
             vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
         else if (bits & RESPONSE_FAIL_BIT) {
-            printf("FAILURE\n");
             gpio_set_level(RED_LED, 1);
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             gpio_set_level(RED_LED, 0);
@@ -101,65 +107,67 @@ void hardware_action_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+// Converts byte array to C string 
 void byte_array_to_str(byte array[], uint8_t len, char buffer[]) {
     for (uint8_t i = 0; i < len; ++i) {
-        // Extract the upper and lower 4 bits of each byte in the array
+        /* extract the upper and lower 4 bits of each byte in the array */
         byte nib1 = (array[i] >> 4) & 0x0F;
         byte nib2 = (array[i] >> 0) & 0x0F;
 
-        // Convert the 4-bit values to ASCII characters
+        /* convert the 4-bit values to ASCII characters */
         buffer[i * 2 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
         buffer[i * 2 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
     }
-    buffer[len * 2] = '\0';  // Add a null terminator at the end of the string
+    buffer[len * 2] = '\0';  // add a null terminator at the end of the string
 }
 
+// Collects the UID for publishing
 void mfrc522_task(void *pvParameters) {
     for(;;) {
-        // Reseta o loop se não tiver cartão novo presente no reader
         if ( ! mfrc522.PICC_IsNewCardPresent() || ! mfrc522.PICC_ReadCardSerial()) {
             continue;
         }
         char uid_str[mfrc522.uid.size *2 + 1] = "";
         byte_array_to_str(mfrc522.uid.uidByte, mfrc522.uid.size, uid_str);
         
-        xQueueSend(mqtt_out, &uid_str, 0);
+        xQueueSend(pub_queue, &uid_str, 0);
         mfrc522.PICC_HaltA();
     }
     vTaskDelete(NULL);
 }
 
+// Publishes UID to PUB_TOPIC
 void UID_publish_task(void *pvParameters) {
     for(;;) {
         char uid_str[9] = "";
-        uid_str[8] = '\0';  // Null-terminate the buffer just to be sure
-        xQueueReceive(mqtt_out, uid_str, portMAX_DELAY);  // HACK: does portMAX_DELAY actually wait indefinetely?
+        uid_str[8] = '\0';  // null-terminate the buffer just to be sure
+        xQueueReceive(pub_queue, uid_str, portMAX_DELAY);  // HACK: does portMAX_DELAY actually wait indefinetely?
 
         ESP_LOGI(TAG, "PICC UID: %s", uid_str);
-        publish("topic/qos1", uid_str, 0, 1, 0);
+        publish(PUB_TOPIC, uid_str, 0, 1, 0);
     }
     vTaskDelete(NULL);
 }
 
+// Receives response from the server and sets according event group bits
 void response_task(void *pvParameters) {
     for(;;) {
-        char buffer[2];  // Buffer to store "0" or "1"
-        buffer[1] = '\0';  // Null-terminate the buffer just to be sure
+        char buffer[2] = "";
+        buffer[1] = '\0';  // null-terminate the buffer just to be sure
 
-        xQueueReceive(mqtt_in, buffer, portMAX_DELAY);
-        printf("Response: %s\n", buffer);
+        xQueueReceive(sub_queue, buffer, portMAX_DELAY);
+        ESP_LOGI("Server Response: %s", buffer);
 
         if(strcmp(buffer, "1") == 0) {
-            xEventGroupSetBits(s_response_event_group, RESPONSE_SUCCESS_BIT);
+            xEventGroupSetBits(s_hardware_event_group, RESPONSE_SUCCESS_BIT);
         }
         else if(strcmp(buffer, "0") == 0) {
-            xEventGroupSetBits(s_response_event_group, RESPONSE_FAIL_BIT);
+            xEventGroupSetBits(s_hardware_event_group, RESPONSE_FAIL_BIT);
         }
     }
     vTaskDelete(NULL);
 }
 
-// Meant to initialize and start main functionality
 extern "C" void app_main() {
     initArduino();
 
@@ -176,18 +184,18 @@ extern "C" void app_main() {
         return;
     }
 
-    mqtt_in = xQueueCreate( 5, sizeof(char) );  // TODO: delete after use
-    mqtt_out = xQueueCreate( 5, 8 * sizeof(char) );  // TODO: delete after use
-	configASSERT( mqtt_in );
-    configASSERT( mqtt_out );
-
     mqtt_app_start();
-    configure_led();
 
-    buzzer_init();
+    sub_queue = xQueueCreate( 5, sizeof(char) );  // TODO: delete after use
+    pub_queue = xQueueCreate( 5, 8 * sizeof(char) );  // TODO: delete after use
+	configASSERT(sub_queue);
+    configASSERT(pub_queue);
+
     mfrc522.PCD_Init();
-
-    s_response_event_group = xEventGroupCreate();  // TODO: proper deletion
+    configure_led();
+    buzzer_init();
+    
+    s_hardware_event_group = xEventGroupCreate();  // TODO: proper deletion
 
     // TODO: define proper parameters
     xTaskCreate(&mfrc522_task, "mfrc522_task", 2048, NULL, 5, NULL);

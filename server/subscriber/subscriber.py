@@ -21,8 +21,7 @@ if is_connected:
 
 def on_connect(client, userdata, flags, rc):
     print(f"\nConnected with result code {rc}\n", flush=True)
-    client.subscribe("topic/qos1")  # topic
-
+    client.subscribe("/topic/tag_uid")
 
 def check_on_database(key):
     value = tags_db.get(key)
@@ -43,11 +42,11 @@ def check_PICC_UID(picc_uid):
     result = tags_db.get(picc_uid)
     if result is not None:
         print(f"{picc_uid} found in Redis")
-        client.publish("topic/qos0", "1")
+        client.publish("/topic/db_response", "1")
         update_attendance(result)
     else:
         print(f"Key {picc_uid} not found in Redis.")
-        client.publish("topic/qos0", "0")
+        client.publish("/topic/db_response", "0")
 
 
 def on_message(client, userdata, msg):
