@@ -1,6 +1,7 @@
-#include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+#include "driver/ledc.h"
 #include <stdint.h>
 
 #include "buzzer_controller.h"

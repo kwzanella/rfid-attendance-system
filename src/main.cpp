@@ -80,7 +80,7 @@ void configure_led(void) {
 
 // Controls the LED and buzzer according to the data from the event group
 void hardware_action_task(void *pvParameters) {
-    while (1) {
+    for(;;) {
         EventBits_t bits = xEventGroupWaitBits(s_hardware_event_group,
             RESPONSE_SUCCESS_BIT | RESPONSE_FAIL_BIT,
             pdTRUE,  // reset bits after exit
@@ -124,7 +124,7 @@ void byte_array_to_str(byte array[], uint8_t len, char buffer[]) {
 // Collects the UID for publishing
 void mfrc522_task(void *pvParameters) {
     for(;;) {
-        if ( ! mfrc522.PICC_IsNewCardPresent() || ! mfrc522.PICC_ReadCardSerial()) {
+        if ( ! mfrc522.PICC_IsNewCardPresent() || ! mfrc522.PICC_ReadCardSerial() ) {
             continue;
         }
         char uid_str[mfrc522.uid.size *2 + 1] = "";
@@ -156,7 +156,7 @@ void response_task(void *pvParameters) {
         buffer[1] = '\0';  // null-terminate the buffer just to be sure
 
         xQueueReceive(sub_queue, buffer, portMAX_DELAY);
-        ESP_LOGI("Server Response: %s", buffer);
+        ESP_LOGI(TAG, "Server Response: %s", buffer);
 
         if(strcmp(buffer, "1") == 0) {
             xEventGroupSetBits(s_hardware_event_group, RESPONSE_SUCCESS_BIT);
