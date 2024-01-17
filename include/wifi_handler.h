@@ -1,5 +1,4 @@
-#ifndef WIFI_HANDLER_H
-#define WIFI_HANDLER_H
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,5 +13,3 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base,
 #ifdef __cplusplus
 }
 #endif
-
-#endif  // WIFI_HANDLER_H

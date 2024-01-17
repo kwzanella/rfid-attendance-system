@@ -1,26 +1,27 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
 #include "esp_log.h"
 #include "mqtt_client.h"
 #include "esp_event.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+
 #include "secrets.h"
 #include "mqtt_handler.h"
-
-// TODO: for some reason, the whole program crashes when the MQTT connection to broker fails
 
 static const char *TAG = "mqtt_handler";
 
 extern QueueHandle_t sub_queue;
-static esp_mqtt_client_handle_t MQTT_CLIENT = NULL;  // this is a hack, should read the docs first
+static esp_mqtt_client_handle_t s_mqtt_client = NULL;  // this is a hack, should read the docs first
 
-void log_error_if_nonzero(const char *message, int error_code) {
+void log_error_if_nonzero(const char *message, int error_code)
+{
     if (error_code != 0) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
 
-void mqtt_app_start(void) {
+void mqtt_app_start(void)
+{
     esp_mqtt_client_config_t mqtt_cfg = {
         .uri       = BROKER_URI,
         .client_id = CLIENT_ID,
@@ -31,20 +32,22 @@ void mqtt_app_start(void) {
     esp_mqtt_client_start(client);
 }
 
-void publish(const char *topic, const char *data, int len, int qos, int retain) {
-    esp_mqtt_client_publish(MQTT_CLIENT, topic, data, len, qos, retain);
+void publish(const char *topic, const char *data, int len, int qos, int retain)
+{
+    esp_mqtt_client_publish(s_mqtt_client, topic, data, len, qos, retain);
 }
 
-void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    MQTT_CLIENT = event->client;
+    s_mqtt_client = event->client;
 
     int msg_id;
-    switch ( (esp_mqtt_event_id_t)event_id ) {
+    switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-        msg_id = esp_mqtt_client_subscribe(MQTT_CLIENT, SUB_TOPIC, 1);
+        msg_id = esp_mqtt_client_subscribe(s_mqtt_client, SUB_TOPIC, 1);
         ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
         break;
     case MQTT_EVENT_DISCONNECTED:
@@ -72,7 +75,7 @@ void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event
             log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
             log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
             log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
-            ESP_LOGI(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
+            ESP_LOGE(TAG, "Last errno string (%s)", strerror(event->error_handle->esp_transport_sock_errno));
 
         }
         break;

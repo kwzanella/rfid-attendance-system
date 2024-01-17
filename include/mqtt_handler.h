@@ -1,5 +1,4 @@
-#ifndef MQTT_HANDLER_H
-#define MQTT_HANDLER_H
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,5 +14,3 @@ void publish(const char *topic, const char *data, int len, int qos, int retain);
 #ifdef __cplusplus
 }
 #endif
-
-#endif  // MQTT_HANDLER_H

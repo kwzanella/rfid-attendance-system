@@ -1,8 +1,9 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <stdint.h>
 
 #include "driver/ledc.h"
-#include <stdint.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "buzzer_controller.h"
 
@@ -11,7 +12,8 @@
 #define DUTY_RESOLUTION    LEDC_TIMER_13_BIT
 #define BUZZER_DUTY        8191  // Determines the volume. Max value is 2**LEDC_TIMER_13_BIT
 
-void buzzer_init() {
+void buzzer_init()
+{
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_HIGH_SPEED_MODE,
         .duty_resolution = DUTY_RESOLUTION,
@@ -38,7 +40,8 @@ void buzzer_init() {
 }
 
 
-void play_tone(const uint32_t frequency, const uint16_t duration) {
+void play_tone(const uint32_t frequency, const uint16_t duration)
+{
     ledc_set_freq(LEDC_HIGH_SPEED_MODE, LEDC_TIMER_0, frequency);
 
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, BUZZER_CHANNEL, BUZZER_DUTY);
