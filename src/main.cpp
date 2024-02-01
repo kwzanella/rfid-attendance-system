@@ -21,6 +21,12 @@
 #include "buzzer_controller.h"
 
 /*
+* this code follows the ESP-IDF style guide defined in:
+* https://docs.espressif.com/projects/esp-idf/en/latest/esp32/contribute/style-guide.html
+*/
+
+
+/*
  * -------------------------------------------
  *              RFID-RC522      ESP-WROOM-32
  * Signal       Pin             Pin
@@ -77,6 +83,21 @@ void configure_led(void)
     gpio_set_direction(GREEN_LED, GPIO_MODE_OUTPUT);
 }
 
+// Converts byte array to C string 
+void byte_array_to_str(byte array[], uint8_t len, char buffer[])
+{
+    for (uint8_t i = 0; i < len; ++i) {
+        // extract the upper and lower 4 bits of each byte in the array
+        byte nib1 = (array[i] >> 4) & 0x0F;
+        byte nib2 = (array[i] >> 0) & 0x0F;
+
+        // convert the 4-bit values to ASCII characters
+        buffer[i * 2 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
+        buffer[i * 2 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
+    }
+    buffer[len * 2] = '\0';
+}
+
 // Controls the LED and buzzer according to the data from the event group
 void hardware_action_task(void *pvParameters)
 {
@@ -106,21 +127,6 @@ void hardware_action_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-// Converts byte array to C string 
-void byte_array_to_str(byte array[], uint8_t len, char buffer[])
-{
-    for (uint8_t i = 0; i < len; ++i) {
-        // extract the upper and lower 4 bits of each byte in the array
-        byte nib1 = (array[i] >> 4) & 0x0F;
-        byte nib2 = (array[i] >> 0) & 0x0F;
-
-        // convert the 4-bit values to ASCII characters
-        buffer[i * 2 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
-        buffer[i * 2 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
-    }
-    buffer[len * 2] = '\0';  // add a null terminator at the end of the string
-}
-
 // Collects the UID for publishing
 void mfrc522_task(void *pvParameters)
 {
@@ -142,8 +148,8 @@ void UID_publish_task(void *pvParameters)
 {
     for (;;) {
         char uid_str[9] = "";
-        uid_str[8] = '\0';  // null-terminate the buffer just to be sure
-        xQueueReceive(pub_queue, uid_str, portMAX_DELAY);  // HACK: does portMAX_DELAY actually wait indefinetely?
+        uid_str[8] = '\0';
+        xQueueReceive(pub_queue, uid_str, portMAX_DELAY);  // wait until data is received
 
         ESP_LOGI(TAG, "PICC UID: %s", uid_str);
         publish(PUB_TOPIC, uid_str, 0, 1, 0);
@@ -158,7 +164,7 @@ void response_task(void *pvParameters)
         char buffer[2] = "";
         buffer[1] = '\0';  // null-terminate the buffer just to be sure
 
-        xQueueReceive(sub_queue, buffer, portMAX_DELAY);
+        xQueueReceive(sub_queue, buffer, portMAX_DELAY);  // wait until data is received
         ESP_LOGI(TAG, "Server Response: %s", buffer);
 
         if(strcmp(buffer, "1") == 0) {
@@ -200,9 +206,8 @@ extern "C" void app_main()
     
     s_hardware_event_group = xEventGroupCreate();  // TODO: proper deletion
 
-    // TODO: define proper parameters
-    xTaskCreate(&mfrc522_task, "mfrc522_task", 2048, NULL, 5, NULL);
-    xTaskCreate(&response_task, "comm_task", 2048, NULL, 5, NULL);
-    xTaskCreate(&UID_publish_task, "mfrc522_task", 2048, NULL, 5, NULL);
-    xTaskCreate(&hardware_action_task, "hardware_action_task", 2048, NULL, 5, NULL);
+    xTaskCreate(&mfrc522_task, "mfrc522_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+    xTaskCreate(&hardware_action_task, "hardware_action_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+    xTaskCreate(&response_task, "response_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+    xTaskCreate(&UID_publish_task, "mfrc522_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
 }
