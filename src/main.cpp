@@ -1,9 +1,9 @@
 #include <stdio.h>
+#include <assert.h>
 
 #include "driver/gpio.h"
 #include "esp_event.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -180,34 +180,21 @@ extern "C" void app_main()
 {
     initArduino();
 
-    // Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();   
-    }
-    ESP_ERROR_CHECK(ret);
+    wifi_app_start();  // TODO: Treat return code
 
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    if (wifi_init_sta() != ESP_OK) {  // only continues if wifi is initialized correctly
-        return;
-    }
+    mqtt_app_start();  // TODO: Adapt function to verify if started correctly
 
-    mqtt_app_start();
-
-    sub_queue = xQueueCreate( 5, sizeof(char) );  // TODO: delete after use
-    pub_queue = xQueueCreate( 5, 8 * sizeof(char) );  // TODO: delete after use
-	configASSERT(sub_queue);
-    configASSERT(pub_queue);
+    // Does not need to be deleted as it will last the entire program
+    sub_queue = xQueueCreate(5, sizeof(char));
+    pub_queue = xQueueCreate(5, 8 * sizeof(char));
+    s_hardware_event_group = xEventGroupCreate();
 
     s_mfrc522.PCD_Init();
     configure_led();
     buzzer_init();
-    
-    s_hardware_event_group = xEventGroupCreate();  // TODO: proper deletion
 
-    xTaskCreate(&mfrc522_task, "mfrc522_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
+    xTaskCreate(&mfrc522_task,         "mfrc522_task",         configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
     xTaskCreate(&hardware_action_task, "hardware_action_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
-    xTaskCreate(&response_task, "response_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
-    xTaskCreate(&UID_publish_task, "mfrc522_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+    xTaskCreate(&response_task,        "response_task",        configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+    xTaskCreate(&UID_publish_task,     "mfrc522_task",         configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
 }
