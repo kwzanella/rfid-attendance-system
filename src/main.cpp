@@ -74,7 +74,7 @@ static MFRC522DriverSPI s_driver{s_chip_select};
 
 static MFRC522 s_mfrc522{s_driver};
 
-// TODO: proper GPIO config and init. Will remove this function later
+// FIXME: Proper GPIO config and init
 void configure_led(void)
 {
     gpio_reset_pin(RED_LED);
@@ -98,8 +98,8 @@ void byte_array_to_str(byte array[], uint8_t len, char buffer[])
     buffer[len * 2] = '\0';
 }
 
-// Controls the LED and buzzer according to the data from the event group
-void hardware_action_task(void *pvParameters)
+// Provides a positive or negative feedback to the user based on the event group
+void provide_user_feedback_task(void *pvParameters)
 {
     for (;;) {
         EventBits_t bits = xEventGroupWaitBits(s_hardware_event_group,
@@ -128,7 +128,7 @@ void hardware_action_task(void *pvParameters)
 }
 
 // Collects the UID for publishing
-void mfrc522_task(void *pvParameters)
+void collect_UID_task(void *pvParameters)
 {
     for (;;) {
         if ( ! s_mfrc522.PICC_IsNewCardPresent() || ! s_mfrc522.PICC_ReadCardSerial() ) {
@@ -137,14 +137,19 @@ void mfrc522_task(void *pvParameters)
         char uid_str[s_mfrc522.uid.size *2 + 1] = "";
         byte_array_to_str(s_mfrc522.uid.uidByte, s_mfrc522.uid.size, uid_str);
         
-        xQueueSend(pub_queue, &uid_str, 0);
+        /*
+        * IMPORTANT!!!
+        * The function "PICC_HaltA" has to be called before "xQueueSend";
+        * Otherwise, this task will not reset the watchdog and the program will crash;
+        */
         s_mfrc522.PICC_HaltA();
+        xQueueSend(pub_queue, &uid_str, portMAX_DELAY);  // Must wait for space in queue
     }
     vTaskDelete(NULL);
 }
 
 // Publishes UID to PUB_TOPIC
-void UID_publish_task(void *pvParameters)
+void publish_UID_task(void *pvParameters)
 {
     for (;;) {
         char uid_str[9] = "";
@@ -158,7 +163,7 @@ void UID_publish_task(void *pvParameters)
 }
 
 // Receives response from the server and sets according event group bits
-void response_task(void *pvParameters)
+void receive_server_response_task(void *pvParameters)
 {
     for (;;) {
         char buffer[2] = "";
@@ -193,8 +198,40 @@ extern "C" void app_main()
     configure_led();
     buzzer_init();
 
-    xTaskCreate(&mfrc522_task,         "mfrc522_task",         configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
-    xTaskCreate(&hardware_action_task, "hardware_action_task", configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 1, NULL);
-    xTaskCreate(&response_task,        "response_task",        configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
-    xTaskCreate(&UID_publish_task,     "mfrc522_task",         configMINIMAL_STACK_SIZE, NULL, configMAX_PRIORITIES - 2, NULL);
+    /*
+    * FIXME: Tasks only work if priority between them is the same;
+    * This will most likely be solved when an interrupt is implemented in "collect_UID_task";
+    */
+    xTaskCreate(
+        &collect_UID_task,
+        "collect_UID",
+        configMINIMAL_STACK_SIZE * 2,
+        NULL,
+        5,
+        NULL);
+
+    xTaskCreate(
+        &publish_UID_task,
+        "publish_UID",
+        configMINIMAL_STACK_SIZE * 3,
+        NULL,
+        5,
+        NULL);
+
+    xTaskCreate(
+        &receive_server_response_task,
+        "server_response",
+        configMINIMAL_STACK_SIZE * 3,
+        NULL,
+        5,
+        NULL);
+
+    xTaskCreate(
+        &provide_user_feedback_task,
+        "provide_feedback",
+        configMINIMAL_STACK_SIZE,
+        NULL,
+        5,
+        NULL);
+    // TODO: Change configMAX_TASK_NAME_LEN
 }
